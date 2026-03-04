@@ -1,0 +1,58 @@
+services:
+
+  db:
+    image: postgres:18.3-alpine3.23
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: arXiv_ML
+    volumes:
+      - db_data:/var/lib/postgresql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "user", "-d", "arXiv_ML"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  fetcher:
+    build:
+      context: ./backend
+    environment:
+      POSTGRES_URL: postgresql://user:password@db:5432/arXiv_ML
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python", "-m", "app.fetch_articles"]
+    restart: "no"
+
+  precomputer:
+    build:
+      context: ./backend
+    environment:
+      POSTGRES_URL: postgresql://user:password@db:5432/arXiv_ML
+    depends_on:
+      fetcher:
+        condition: service_completed_successfully
+    command: ["python", "-m", "app.precompute_embeddings"]
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      POSTGRES_URL: postgresql://user:password@db:5432/arXiv_ML
+    depends_on:
+      precomputer:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/static:/app/static
+
+volumes:
+  db_data:
